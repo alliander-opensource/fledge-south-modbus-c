@@ -97,7 +97,7 @@ class Modbus {
 					// Check if list of registers is contiguous so that downstream we can decide to read in a single call
 				    // and reshuffle the words
 					bool isContiguous = true;
-					unsigned int min_reg = 0;
+					unsigned int min_reg = 1<<31;
 					unsigned int max_reg = 0;
 					for(auto i = m_registers.begin(); i != m_registers.end() && isContiguous; ++i)
 					{

@@ -12,6 +12,7 @@
 #include <logger.h>
 #include <math.h>
 #include <string.h>
+#include <algorithm>
 #include <modbus/modbus-version.h>
 
 #define INSTRUMENT_IO		0	// Enabl instrusmentation of IO and mutex
@@ -1458,9 +1459,27 @@ ModbusCacheManager	*manager = ModbusCacheManager::getModbusCacheManager();
 	errno = 0;
 	if (m_map->m_isVector)
 	{
-		long regValue = 0;
+		uint64_t regValue = 0;
 		bool failure = false;
-		for (int a = 0; a < m_map->m_registers.size(); a++)
+
+		// The Janitza UMG 604 PRO will set 2nd word of floats to 0 if requested independently or even when not aligned correctly.
+		// This breaks the basic caching model that assumes independend registers, so when a contiguous multi-register read is 
+		// requested we don't look at the cache and read it using a single call
+		if(m_map->m_isVectorContiguous)
+		{
+			uint64_t val = 0;
+			if ((rc = modbus_read_registers(modbus, m_map->m_registers[0], m_map->m_registers.size(), (uint16_t*)(&val))) == 1)
+			{
+				for(auto i = m_map->m_registers.begin(); i != m_map->m_registers.end(); ++i)
+					regValue |= (val >> ((*i - m_map->m_min_register)*16)) << ((m_map->m_registers.end() - i - 1)*16);
+			}
+			else
+			{
+				Logger::getLogger()->error("Modbus read multiple register at %d, %s", m_map->m_registers[0], modbus_strerror(errno));
+				failure = true;
+			}
+		}
+		else for (int a = 0; a < m_map->m_registers.size(); a++)
 		{
 			uint16_t val;
 			if (manager->isCached(m_slave, MODBUS_REGISTER, m_map->m_registers[a]))
@@ -1478,20 +1497,21 @@ ModbusCacheManager	*manager = ModbusCacheManager::getModbusCacheManager();
 				failure = true;
 			}
 		}
+
 		if (failure)
 		{
 			return NULL;
 		}
 		if (m_map->m_flags & ITEM_SWAP_BYTES)
 		{
-			unsigned long odd = regValue & 0x00ff00ff;
-			unsigned long even = regValue & 0xff00ff00;
+			uint64_t odd = regValue & UINT64_C(0x00ff00ff00ff00ff);
+			uint64_t even = regValue & UINT64_C(0xff00ff00ff00ff00);
 			regValue = (odd << 8) | (even >> 8);
 		}
 		if (m_map->m_flags & ITEM_SWAP_WORDS)
 		{
-			unsigned long odd = regValue & 0xffff;
-			unsigned long even = regValue & 0xffff0000;
+			uint64_t odd = regValue & UINT64_C(0x0000ffff0000ffff);
+			uint64_t even = regValue & UINT64_C(0xffff0000ffff0000);
 			regValue = (odd << 16) | (even >> 16);
 		}
 		if (m_map->m_flags & ITEM_TYPE_FLOAT)

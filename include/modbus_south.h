@@ -17,6 +17,7 @@
 #include <map>
 #include <mutex>
 #include <queueMutex.h>
+#include <algorithm>
 
 #define ITEM_TYPE_FLOAT			0x0001
 #define ITEM_SWAP_BYTES			0x0002
@@ -83,15 +84,34 @@ class Modbus {
 			public:
 				RegisterMap(const std::string& value, const unsigned int registerNo, double scale, double offset) :
 					m_name(value), m_registerNo(registerNo), m_scale(scale), m_offset(offset), m_assetName(""),
-				       	m_isVector(false), m_flags(0) {};
+				       	m_isVector(false), m_isVectorContiguous(0), m_min_register(0), m_flags(0) {};
 				RegisterMap(const std::string& assetName, const std::string& value, const unsigned int registerNo,
 					       	double scale, double offset) :
 					m_name(value), m_registerNo(registerNo), m_scale(scale), m_offset(offset), m_assetName(assetName),
-				       	m_isVector(false), m_flags(0) {};
+				       	m_isVector(false), m_isVectorContiguous(0), m_min_register(0), m_flags(0) {};
 				RegisterMap(const std::string& assetName, const std::string& value, const std::vector<unsigned int> registers,
 					       	double scale, double offset) :
 					m_name(value), m_registers(registers), m_scale(scale), m_offset(offset), m_assetName(assetName),
-				       	m_isVector(true), m_registerNo(0), m_flags(0) {};
+				       	m_isVector(true), m_registerNo(0), m_isVectorContiguous(0), m_min_register(0), m_flags(0) {
+					
+					// Check if list of registers is contiguous so that downstream we can decide to read in a single call
+				    // and reshuffle the words
+					bool isContiguous = true;
+					unsigned int min_reg = 0;
+					unsigned int max_reg = 0;
+					for(auto i = m_registers.begin(); i != m_registers.end() && isContiguous; ++i)
+					{
+						isContiguous &= std::find(i+1, m_registers.end(), *i) == m_registers.end();
+						min_reg = *i < min_reg ? *i : min_reg;
+						max_reg = *i > max_reg ? *i : max_reg;
+					}
+					isContiguous &= max_reg - min_reg == m_registers.size();
+					isContiguous &= m_registers.size() <= 8;
+
+					m_isVectorContiguous = isContiguous;
+					m_min_register = min_reg;
+				};
+
 				void				setFlag(unsigned long flag) { m_flags |= flag; };
 				double				round(double value, int bits);
 				const std::string		m_assetName;
@@ -100,6 +120,8 @@ class Modbus {
 				const double			m_scale;
 				const double			m_offset;
 				const bool			m_isVector;
+				bool			m_isVectorContiguous;
+				unsigned int		m_min_register;
 				unsigned long			m_flags;
 				const std::vector<unsigned int> m_registers;
 		};
